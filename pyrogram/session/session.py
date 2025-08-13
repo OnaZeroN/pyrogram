@@ -105,7 +105,6 @@ class Session:
         self.recv_task = None
 
         self.is_started = asyncio.Event()
-        self.restart_event = asyncio.Event()
 
     async def start(self):
         while True:
@@ -195,20 +194,13 @@ class Session:
         await self.connection.close()
 
         if self.recv_task:
-            try:
-                await self.recv_task
-            except asyncio.CancelledError:
-                pass
-
-            self.recv_task = None
+            await self.recv_task
 
         log.info("Session stopped")
 
     async def restart(self):
-        self.restart_event.set()
         await self.stop()
         await self.start()
-        self.restart_event.clear()
 
     async def handle_packet(self, packet):
         try:
@@ -329,10 +321,7 @@ class Session:
         log.info("NetworkTask started")
 
         while True:
-            try:
-                packet = await asyncio.wait_for(self.connection.recv(), timeout=1)
-            except asyncio.TimeoutError:
-                continue
+            packet = await self.connection.recv()
 
             if packet is None or len(packet) == 4:
                 if packet:
@@ -450,16 +439,6 @@ class Session:
                     Session.MAX_RETRIES - retries + 1,
                     query_name, str(e) or repr(e)
                 )
-
-                # restart was never being called after Exception block
-                if not self.restart_event.is_set():
-                    self.client.loop.create_task(self.restart())
-                else:
-                    # multiple Exceptions can be raised in a row, so we need to wait for the restart to finish
-                    try:
-                        await asyncio.wait_for(self.restart_event.wait(), self.WAIT_TIMEOUT)
-                    except asyncio.TimeoutError:
-                        pass
 
                 await asyncio.sleep(0.5)
 
